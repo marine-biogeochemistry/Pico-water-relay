@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <title>PICO W BLE Listener</title>
   <link rel="manifest" href="manifest.json">
-  <script src="service-worker.js"></script>
-  <style>
+   <style>
+
     body { font-family: sans-serif; margin: 20px; }
     #bluetoothData { 
       border: 1px solid #ccc; 
@@ -31,7 +31,15 @@
 
   </style>
 </head>
-<body>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('service-worker.js?v=2')
+        .then(reg => console.log('Service worker registered:', reg.scope))
+        .catch(err => console.error('Service worker registration failed:', err));
+    }
+  </script>
+</body>
+
 
 
   <h1>PICO W BLE Panel</h1>
@@ -49,19 +57,34 @@
   <input type="time" id="eventTime">
   <br>
   <label for="eventDuration">⏲ Duration (min):</label>
-  <input type="number" id="eventDuration" min="1" max="999">
+  <input type="number" id="eventDuration" min="60" max="999">
   <br>
+
   <button onclick="sendAddEvent()">📤 Send Event</button>
 
   <button onclick="sendDuration()">⏱ Update Duration</button>
 
+  <h3>📆 Generate Recurring Schedule</h3>
+  <label for="batchCount">🔁 Number of Events:</label>
+  <input type="number" id="batchCount" min="1" max="50" value="5">
+  <br>
+  <label for="batchInterval">⏱ Interval (days):</label>
+  <input type="number" id="batchInterval" min="1" max="1440" value="7">
+  <br>
+  <button onclick="generateBatchSchedule()">🧮 Generate Schedule</button>
 
-  <h3>📡 Incoming Data</h3>
-  <div id="bluetoothData"></div>
 
-  <h3>📄 Relay Log</h3>
+  <h3>📅 Batch Schedule Generator</h3>
+  <p>Enter multiple event times to send in bulk:</p>
+  <textarea id="scheduleInput" rows="6" style="width:100%; font-family: monospace;" placeholder="e.g.\n2025-07-30 08:00\n2025-08-01 14:30"></textarea>
+  <br>
+  <button onclick="sendScheduleFile()">📤 Send Schedule File</button>
+  <button onclick="readSchedule()">📥 Read Schedule File</button>
+
+
+  <h3>📡 System Data & Logs</h3>
   <button onclick="readLog()">📥 Read Log File</button>
-  <div id="relayLogOutput"></div>
+  <div id="bluetoothData"></div>
 
   <script>
     let bluetoothDevice, txChar, rxChar;
@@ -74,6 +97,17 @@
           .catch(err => console.error("❌ SW registration failed:", err));
       });
     }
+    
+    // Auto-set today's date when page loads (using local timezone)
+    window.addEventListener('load', () => {
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      const day = String(today.getDate()).padStart(2, '0');
+      const dateString = `${year}-${month}-${day}`;
+      document.getElementById('eventDate').value = dateString;
+      console.log('📅 Auto-set date to today (local time):', dateString);
+    });
 
     async function connectAndListen() {
       try {
@@ -97,6 +131,31 @@
         document.getElementById("connectionStatus").textContent =
           "✅ Connected and ready to send/receive";
         console.log("📡 Subscribed to TX notifications");
+        
+        // Add disconnect handler for auto-reconnection
+        bluetoothDevice.addEventListener('gattserverdisconnected', () => {
+          document.getElementById("connectionStatus").textContent = "⚠️ Disconnected - Attempting reconnect...";
+          console.log("🔌 Device disconnected, attempting reconnection...");
+          setTimeout(async () => {
+            try {
+              // Try to reconnect to the existing device instead of requesting a new one
+              const server = await bluetoothDevice.gatt.connect();
+              const service = await server.getPrimaryService('6e400001-b5a3-f393-e0a9-e50e24dcca9e');
+              
+              txChar = await service.getCharacteristic('6e400003-b5a3-f393-e0a9-e50e24dcca9e');
+              await txChar.startNotifications();
+              txChar.addEventListener('characteristicvaluechanged', handleBluetoothData);
+              
+              rxChar = await service.getCharacteristic('6e400002-b5a3-f393-e0a9-e50e24dcca9e');
+              
+              document.getElementById("connectionStatus").textContent = "✅ Reconnected successfully";
+              console.log("✅ Auto-reconnection successful");
+            } catch (err) {
+              document.getElementById("connectionStatus").textContent = "❌ Reconnection failed - Click 'Scan & Connect' to retry";
+              console.error("❌ Auto-reconnection failed:", err);
+            }
+          }, 2000);
+        });
       } catch (error) {
         console.error("❌ Connection failed:", error);
         alert("Bluetooth error: " + error.message);
@@ -114,6 +173,17 @@
       console.log("📤 Sent:", msg);
     }
 
+    function fetchSchedule() {
+        fetch("/schedule")  // Or whatever endpoint you define
+            .then(response => response.text())
+            .then(data => {
+                document.getElementById("schedule-output").innerText = data;
+            })
+            .catch(err => {
+                document.getElementById("schedule-output").innerText = "Error loading schedule.";
+                console.error(err);
+            });
+    }
 
     function handleBluetoothData(event) {
       const bytes = new Uint8Array(event.target.value.buffer);
@@ -140,19 +210,35 @@
     function sendAddEvent() {
       const date = document.getElementById("eventDate").value;
       const time = document.getElementById("eventTime").value;
+      const durationInput = document.getElementById("eventDuration").value;
+
+      const defaultDuration = 60;
+      const duration = durationInput && !isNaN(durationInput) ? durationInput : defaultDuration;
 
       if (!date || !time) {
         alert("⛔️ Please enter both date and time.");
         return;
       }
+      
+      // Validate future date
+      const selectedDate = new Date(date + 'T' + time);
+      const now = new Date();
+      if (selectedDate <= now) {
+        alert("⚠️ Please select a future date and time.");
+        return;
+      }
 
-      const message = "ADD:" + date + " " + time;
+      const message = `ADD:${date} ${time} ${duration}`;
 
       if (rxChar) {
         rxChar.writeValue(new TextEncoder().encode(message))
           .then(() => {
             console.log("📤 Sent:", message);
             document.getElementById("connectionStatus").textContent = "✅ Event sent to Pico W";
+            // Update the schedule input box with the new event
+            const scheduleBox = document.getElementById("scheduleInput");
+            const newLine = `${date} ${time} ${duration}`;
+            scheduleBox.value = `${newLine}\n${scheduleBox.value}`.trim();
           })
           .catch(err => {
             console.error("❌ BLE write failed:", err);
@@ -205,19 +291,72 @@
       }
     }
 
+    function readSchedule() {
+      const message = "READ_SCHEDULE";
+      if (rxChar) {
+        rxChar.writeValue(new TextEncoder().encode(message))
+          .then(() => {
+            console.log("📤 Sent:", message);
+            document.getElementById("connectionStatus").textContent = "📄 Requested schedule from Pico W";
+          })
+          .catch(err => {
+            console.error("❌ BLE write failed:", err);
+            alert("Failed to request schedule data");
+          });
+      } else {
+        alert("⚠️ BLE not connected yet.");
+      }
+    }
+
+    function fetchNextTrigger() {
+      const message = "NEXTTRIGGER";
+      if (rxChar) {
+        rxChar.writeValue(new TextEncoder().encode(message))
+          .then(() => {
+            console.log("📤 Sent:", message);
+            document.getElementById("connectionStatus").textContent = "⏩ Requested next trigger info";
+          })
+          .catch(err => {
+            console.error("❌ BLE write failed:", err);
+            alert("Failed to request next trigger");
+          });
+      } else {
+        alert("⚠️ BLE not connected yet.");
+      }
+    }
+
+
     function handleBluetoothData(event) {
       const bytes = new Uint8Array(event.target.value.buffer);
       const decoded = new TextDecoder().decode(bytes);
       const timestamp = new Date().toLocaleTimeString();
 
       if (decoded.startsWith("[LOG]")) {
-        const logDisplay = document.getElementById("relayLogOutput");
+        const logDisplay = document.getElementById("bluetoothData");
         const logLine = document.createElement("div");
-        logLine.textContent = decoded.replace("[LOG]", "").trim();
-        logDisplay.appendChild(logLine);
+        logLine.textContent = `📄 Log: ${decoded.replace("[LOG]", "").trim()}`;
+        logDisplay.insertBefore(logLine, logDisplay.firstChild);
 
-        while (logDisplay.childNodes.length > 100) {
-          logDisplay.removeChild(logDisplay.firstChild);
+        while (logDisplay.childNodes.length > 50) {
+          logDisplay.removeChild(logDisplay.lastChild);
+        }
+      } else if (decoded.startsWith("[FILE]")) {
+        const scheduleDisplay = document.getElementById("bluetoothData");
+        const line = document.createElement("div");
+        line.textContent = `📁 Schedule: ${decoded.replace("[FILE]", "").trim()}`;
+        scheduleDisplay.insertBefore(line, scheduleDisplay.firstChild);
+
+        while (scheduleDisplay.childNodes.length > 50) {
+          scheduleDisplay.removeChild(scheduleDisplay.lastChild);
+        }
+      } else if (decoded.startsWith("NEXTTRIGGER")) {
+        const display = document.getElementById("bluetoothData");
+        const line = document.createElement("div");
+        line.textContent = `⏳ Next Trigger: ${decoded.replace("NEXTTRIGGER", "").trim()}`;
+        display.insertBefore(line, display.firstChild);
+
+        while (display.childNodes.length > 50) {
+          display.removeChild(display.lastChild);
         }
       } else {
         const display = document.getElementById('bluetoothData');
@@ -231,8 +370,69 @@
       }
     }
 
+    function generateBatchSchedule() {
+      const startDate = document.getElementById("eventDate").value;
+      const startTime = document.getElementById("eventTime").value;
+      const count = parseInt(document.getElementById("batchCount").value);
+      const interval = parseFloat(document.getElementById("batchInterval").value); // days between each event (supports decimals)
+      const duration = parseInt(document.getElementById("eventDuration").value) || 60; // in minutes
+
+      if (!startDate || !startTime || isNaN(count) || isNaN(interval) || isNaN(duration)) {
+        alert("⛔️ Please fill out all fields correctly.");
+        return;
+      }
+
+      const start = new Date(`${startDate}T${startTime}:00`);
+      let output = "";
+
+      for (let i = 0; i < count; i++) {
+        const current = new Date(start.getTime() + i * interval * 24 * 60 * 60 * 1000);
+        // Use local date formatting to avoid timezone issues
+        const year = current.getFullYear();
+        const month = String(current.getMonth() + 1).padStart(2, '0');
+        const day = String(current.getDate()).padStart(2, '0');
+        const hours = String(current.getHours()).padStart(2, '0');
+        const minutes = String(current.getMinutes()).padStart(2, '0');
+        
+        const dateStr = `${year}-${month}-${day}`;
+        const timeStr = `${hours}:${minutes}`;
+        const line = `${dateStr} ${timeStr} ${duration}`;
+        output += line + "\n";
+        console.log(`✅ Line ${i + 1}: ${line}`);
+      }
+
+      document.getElementById("scheduleInput").value = output.trim();
+    }
 
 
+
+    function sendScheduleFile() {
+      const rawData = document.getElementById("scheduleInput").value.trim();
+      if (!rawData) {
+        alert("⛔️ No schedule data entered");
+        return;
+      }
+
+      const lines = rawData.split("\n").map(line => line.trim()).filter(line => line.length > 0);
+
+      const sequence = ["BEGINFILE", ...lines, "ENDFILE"];
+
+      if (rxChar) {
+        let delay = 0;
+        sequence.forEach((cmd, i) => {
+          setTimeout(() => {
+            rxChar.writeValue(new TextEncoder().encode(cmd))
+              .then(() => console.log("📤 Sent:", cmd))
+              .catch(err => console.error("❌ Failed to send:", cmd, err));
+          }, delay);
+          delay += 150; // delay between lines to avoid BLE overrun
+        });
+
+        document.getElementById("connectionStatus").textContent = "📁 Schedule file sent";
+      } else {
+        alert("⚠️ BLE not connected yet.");
+      }
+    }
 
   </script>
 
