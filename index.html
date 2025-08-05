@@ -45,31 +45,33 @@
   <h1>PICO W BLE Panel</h1>
 
   <button onclick="connectAndListen()">🔍 Scan & Connect</button>
-  <button onclick="clearBluetoothDisplay()">🧹 Clear Display</button>
   <p id="selectedDevice"></p>
   <p id="connectionStatus" style="font-weight:bold;"></p>
 
-  <h3>🛠 Send Schedule & Duration</h3>
-  <label for="eventDate">📅 Date:</label>
-  <input type="date" id="eventDate">
-  <br>
-  <label for="eventTime">⏰ Time:</label>
-  <input type="time" id="eventTime">
-  <br>
-  <label for="eventDuration">⏲ Duration (min):</label>
-  <input type="number" id="eventDuration" min="60" max="999">
-  <br>
-
-  <button onclick="sendAddEvent()">📤 Send Event</button>
-
-  <button onclick="sendDuration()">⏱ Update Duration</button>
+  <h3>📡 System Data & Logs</h3>
+  <button onclick="clearBluetoothDisplay()">🧹 Clear Display</button>
+  <button onclick="readLog()">📥 Read Log File</button>
+  <button onclick="saveLog()">💾 Save Log</button>
+  <button onclick="clearLog()">🗑️ Clear Log</button>
+  <div id="bluetoothData"></div>
 
   <h3>📆 Generate Recurring Schedule</h3>
-  <label for="batchCount">🔁 Number of Events:</label>
-  <input type="number" id="batchCount" min="1" max="50" value="5">
-  <br>
-  <label for="batchInterval">⏱ Interval (days):</label>
-  <input type="number" id="batchInterval" min="1" max="1440" value="7">
+  <div style="display: grid; grid-template-columns: max-content max-content; gap: 8px 16px; align-items: center;">
+    <label for="eventDate">📅 Start Date:</label>
+    <input type="date" id="eventDate">
+    
+    <label for="eventTime">⏰ Start Time:</label>
+    <input type="time" id="eventTime">
+    
+    <label for="eventDuration">⏲ Duration (min):</label>
+    <input type="number" id="eventDuration" min="1" max="1440" value="60">
+    
+    <label for="batchCount">🔁 Number of Events:</label>
+    <input type="number" id="batchCount" min="1" max="50" value="5">
+    
+    <label for="batchInterval">📅 Interval (days):</label>
+    <input type="number" id="batchInterval" min="1" max="1440" value="7">
+  </div>
   <br>
   <button onclick="generateBatchSchedule()">🧮 Generate Schedule</button>
 
@@ -82,9 +84,12 @@
   <button onclick="readSchedule()">📥 Read Schedule File</button>
 
 
-  <h3>📡 System Data & Logs</h3>
-  <button onclick="readLog()">📥 Read Log File</button>
-  <div id="bluetoothData"></div>
+  <div style="display: flex; align-items: center; gap: 10px; margin: 10px 0;">
+    <h3 style="margin: 0;">📤 Upload main.py:</h3>
+    <input type="file" id="fileInput" accept=".py" style="flex-grow: 1;">
+    <button onclick="uploadFile()">Upload to Pico</button>
+  </div>
+  <div id="uploadStatus" style="font-weight: bold;"></div>
 
   <script>
     let bluetoothDevice, txChar, rxChar;
@@ -185,93 +190,9 @@
             });
     }
 
-    function handleBluetoothData(event) {
-      const bytes = new Uint8Array(event.target.value.buffer);
-      const decoded = new TextDecoder().decode(bytes);
-      const timestamp = new Date().toLocaleTimeString();
-
-      console.log(`📡 [${timestamp}] Received:`, decoded);
-
-      const display = document.getElementById('bluetoothData');
-      const line = document.createElement('div');
-      line.textContent = `[${timestamp}] ${decoded}`;
-      display.insertBefore(line, display.firstChild);
-
-      while (display.childNodes.length > 50) {
-        display.removeChild(display.lastChild);
-      }
-    }
-
     function clearBluetoothDisplay() {
       document.getElementById("bluetoothData").innerHTML = "";
       console.log("🧹 Display cleared");
-    }
-
-    function sendAddEvent() {
-      const date = document.getElementById("eventDate").value;
-      const time = document.getElementById("eventTime").value;
-      const durationInput = document.getElementById("eventDuration").value;
-
-      const defaultDuration = 60;
-      const duration = durationInput && !isNaN(durationInput) ? durationInput : defaultDuration;
-
-      if (!date || !time) {
-        alert("⛔️ Please enter both date and time.");
-        return;
-      }
-      
-      // Validate future date
-      const selectedDate = new Date(date + 'T' + time);
-      const now = new Date();
-      if (selectedDate <= now) {
-        alert("⚠️ Please select a future date and time.");
-        return;
-      }
-
-      const message = `ADD:${date} ${time} ${duration}`;
-
-      if (rxChar) {
-        rxChar.writeValue(new TextEncoder().encode(message))
-          .then(() => {
-            console.log("📤 Sent:", message);
-            document.getElementById("connectionStatus").textContent = "✅ Event sent to Pico W";
-            // Update the schedule input box with the new event
-            const scheduleBox = document.getElementById("scheduleInput");
-            const newLine = `${date} ${time} ${duration}`;
-            scheduleBox.value = `${newLine}\n${scheduleBox.value}`.trim();
-          })
-          .catch(err => {
-            console.error("❌ BLE write failed:", err);
-            alert("Failed to send BLE message");
-          });
-      } else {
-        alert("⚠️ BLE not connected yet.");
-      }
-    }
-
-    function sendDuration() {
-      const durationValue = document.getElementById("eventDuration").value;
-
-      if (!durationValue || isNaN(durationValue)) {
-        alert("⛔️ Please enter a valid duration number.");
-        return;
-      }
-
-      const message = "DURATION:" + durationValue;
-
-      if (rxChar) {
-        rxChar.writeValue(new TextEncoder().encode(message))
-          .then(() => {
-            console.log("📤 Sent:", message);
-            document.getElementById("connectionStatus").textContent = "✅ Duration sent to Pico W";
-          })
-          .catch(err => {
-            console.error("❌ BLE write failed:", err);
-            alert("Failed to send duration update.");
-          });
-      } else {
-        alert("⚠️ BLE not connected yet.");
-      }
     }
 
     function readLog() {
@@ -308,6 +229,177 @@
       }
     }
 
+    function clearLog() {
+      const message = "CLEAR_LOG";
+      if (rxChar) {
+        rxChar.writeValue(new TextEncoder().encode(message))
+          .then(() => {
+            console.log("📤 Sent:", message);
+            document.getElementById("connectionStatus").textContent = "🗑️ Clearing log on Pico W";
+          })
+          .catch(err => {
+            console.error("❌ BLE write failed:", err);
+            alert("Failed to clear log");
+          });
+      } else {
+        alert("⚠️ BLE not connected yet.");
+      }
+    }
+
+    function saveLog() {
+      // Get the current log content from the display
+      const logDisplay = document.getElementById('bluetoothData');
+      const allContent = logDisplay.textContent || logDisplay.innerText;
+      
+      if (!allContent.trim()) {
+        alert('⚠️ No data available. Please read the log first.');
+        return;
+      }
+      
+      // Debug: Log all content to see what we're working with
+      console.log('Raw log content:', allContent);
+      
+      // First, split on 📄 Log: to separate entries
+      const logSections = allContent.split('📄 Log:');
+      console.log('Found log sections:', logSections.length);
+      
+      // Process each section (skip first one as it's empty or before first 📄 Log:)
+      const logEntries = [];
+      for (let i = 1; i < logSections.length; i++) {
+        const section = logSections[i].trim();
+        // Split into lines and take the first line (in case there are newlines within an entry)
+        const firstLine = section.split('\n')[0].trim();
+        if (firstLine) {
+          logEntries.push(firstLine);
+        }
+      }
+      
+      console.log('Extracted log entries:', logEntries);
+      
+      if (logEntries.length === 0) {
+        alert('⚠️ No log entries found. Please read the log file first.');
+        return;
+      }
+      
+      // Join with newlines
+      const logContent = logEntries.join('\n');
+      
+      // Create a timestamp for the filename
+      const now = new Date();
+      const timestamp = now.getFullYear() + '-' + 
+                       String(now.getMonth() + 1).padStart(2, '0') + '-' + 
+                       String(now.getDate()).padStart(2, '0') + '_' + 
+                       String(now.getHours()).padStart(2, '0') + '-' + 
+                       String(now.getMinutes()).padStart(2, '0') + '-' + 
+                       String(now.getSeconds()).padStart(2, '0');
+      
+      const filename = `pico_log_${timestamp}.txt`;
+      
+      // Create a blob with the log content
+      const blob = new Blob([logContent], { type: 'text/plain' });
+      
+      // Create a download link and trigger it
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      // Clean up the object URL
+      URL.revokeObjectURL(link.href);
+      
+      console.log('💾 Log saved as:', filename);
+      document.getElementById('connectionStatus').textContent = `💾 Log saved as ${filename}`;
+    }
+
+    function uploadFile() {
+      const fileInput = document.getElementById('fileInput');
+      const uploadStatus = document.getElementById('uploadStatus');
+      
+      if (!fileInput.files.length) {
+        alert('⚠️ Please select a file first');
+        return;
+      }
+      
+      if (!rxChar) {
+        alert('⚠️ BLE not connected yet.');
+        return;
+      }
+      
+      const file = fileInput.files[0];
+      const fileName = file.name;
+      
+      uploadStatus.textContent = `📤 Reading file: ${fileName}...`;
+      
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const content = e.target.result;
+        const lines = content.split('\n');
+        
+        uploadStatus.textContent = `📤 Uploading ${fileName} (${lines.length} lines)...`;
+        
+        // Start upload process
+        const beginMessage = `BEGINUPLOAD:${fileName}`;
+        rxChar.writeValue(new TextEncoder().encode(beginMessage))
+          .then(() => {
+            console.log('📤 Started upload for:', fileName);
+            return sendFileChunks(lines, 0);
+          })
+          .then(() => {
+            // Send end upload command
+            return rxChar.writeValue(new TextEncoder().encode('ENDUPLOAD'));
+          })
+          .then(() => {
+            uploadStatus.textContent = `✅ Successfully uploaded ${fileName}`;
+            console.log('✅ File upload completed');
+            document.getElementById('connectionStatus').textContent = `✅ File ${fileName} uploaded to Pico W`;
+          })
+          .catch(err => {
+            console.error('❌ Upload failed:', err);
+            uploadStatus.textContent = `❌ Upload failed: ${err.message}`;
+            alert('Upload failed: ' + err.message);
+          });
+      };
+      
+      reader.onerror = function() {
+        uploadStatus.textContent = '❌ Failed to read file';
+        alert('Failed to read the selected file');
+      };
+      
+      reader.readAsText(file);
+    }
+    
+    function sendFileChunks(lines, index) {
+      return new Promise((resolve, reject) => {
+        if (index >= lines.length) {
+          resolve();
+          return;
+        }
+        
+        // Send 5 lines per chunk to reduce transmission count
+        const chunkSize = 5;
+        const chunk = lines.slice(index, index + chunkSize);
+        const chunkData = chunk.join('\n');
+        
+        rxChar.writeValue(new TextEncoder().encode(chunkData))
+          .then(() => {
+            // Update progress
+            const progress = Math.min(index + chunkSize, lines.length);
+            document.getElementById('uploadStatus').textContent = 
+              `📤 Uploading... ${progress}/${lines.length} lines (${Math.round(progress/lines.length*100)}%)`;
+            
+            // Delay between chunks to avoid overwhelming the Pico
+            setTimeout(() => {
+              sendFileChunks(lines, index + chunkSize)
+                .then(resolve)
+                .catch(reject);
+            }, 100); // 100ms delay between chunks
+          })
+          .catch(reject);
+      });
+    }
+
     function fetchNextTrigger() {
       const message = "NEXTTRIGGER";
       if (rxChar) {
@@ -326,47 +418,95 @@
     }
 
 
+    // Message filtering variables
+    let lastStatusMessage = '';
+    let lastStatusTime = 0;
+    const STATUS_DISPLAY_INTERVAL = 5000; // 5 seconds in milliseconds
+    
     function handleBluetoothData(event) {
       const bytes = new Uint8Array(event.target.value.buffer);
       const decoded = new TextDecoder().decode(bytes);
       const timestamp = new Date().toLocaleTimeString();
-
+      const now = Date.now();
+      
+      // Enhanced logging for debugging
+      console.log(`📡 [${timestamp}] Raw bytes:`, bytes);
+      console.log(`📡 [${timestamp}] Decoded:`, decoded);
+      
+      const display = document.getElementById('bluetoothData');
+      
+      // Check if this is a repetitive status message
+      const isStatusMessage = decoded.includes('Current Time at') || decoded.includes('Next scheduled change');
+      const shouldFilterMessage = isStatusMessage && 
+                                 decoded === lastStatusMessage && 
+                                 (now - lastStatusTime) < STATUS_DISPLAY_INTERVAL;
+      
       if (decoded.startsWith("[LOG]")) {
-        const logDisplay = document.getElementById("bluetoothData");
+        console.log("📄 Processing LOG data:", decoded);
         const logLine = document.createElement("div");
+        logLine.style.color = "#2563eb"; // Blue color for logs
+        logLine.style.fontWeight = "bold";
         logLine.textContent = `📄 Log: ${decoded.replace("[LOG]", "").trim()}`;
-        logDisplay.insertBefore(logLine, logDisplay.firstChild);
-
-        while (logDisplay.childNodes.length > 50) {
-          logDisplay.removeChild(logDisplay.lastChild);
-        }
+        display.insertBefore(logLine, display.firstChild);
+        
+        // Update status to show log received
+        document.getElementById("connectionStatus").textContent = "📄 Log data received";
+        
       } else if (decoded.startsWith("[FILE]")) {
-        const scheduleDisplay = document.getElementById("bluetoothData");
+        console.log("📁 Processing FILE data:", decoded);
         const line = document.createElement("div");
+        line.style.color = "#059669"; // Green color for files
+        line.style.fontWeight = "bold";
         line.textContent = `📁 Schedule: ${decoded.replace("[FILE]", "").trim()}`;
-        scheduleDisplay.insertBefore(line, scheduleDisplay.firstChild);
-
-        while (scheduleDisplay.childNodes.length > 50) {
-          scheduleDisplay.removeChild(scheduleDisplay.lastChild);
-        }
+        display.insertBefore(line, display.firstChild);
+        
+        // Update status to show file received
+        document.getElementById("connectionStatus").textContent = "📁 Schedule data received";
+        
       } else if (decoded.startsWith("NEXTTRIGGER")) {
-        const display = document.getElementById("bluetoothData");
+        console.log("⏳ Processing NEXTTRIGGER data:", decoded);
         const line = document.createElement("div");
+        line.style.color = "#dc2626"; // Red color for triggers
+        line.style.fontWeight = "bold";
         line.textContent = `⏳ Next Trigger: ${decoded.replace("NEXTTRIGGER", "").trim()}`;
         display.insertBefore(line, display.firstChild);
-
-        while (display.childNodes.length > 50) {
-          display.removeChild(display.lastChild);
-        }
+        
+        // Update status to show trigger received
+        document.getElementById("connectionStatus").textContent = "⏳ Next trigger info received";
+        
+      } else if (decoded.trim() === "LOG_END" || decoded.trim() === "FILE_END") {
+        console.log("✅ End marker received:", decoded);
+        const line = document.createElement("div");
+        line.style.color = "#16a34a"; // Green color for completion
+        line.style.fontStyle = "italic";
+        line.textContent = `✅ [${timestamp}] Transfer complete: ${decoded}`;
+        display.insertBefore(line, display.firstChild);
+        
+        document.getElementById("connectionStatus").textContent = "✅ Data transfer completed";
+        
       } else {
-        const display = document.getElementById('bluetoothData');
+        console.log("📡 Processing general data:", decoded);
+        
+        // Filter repetitive status messages to display only every 5 seconds
+        if (shouldFilterMessage) {
+          console.log("🔇 Filtered repetitive message:", decoded);
+          return; // Skip displaying this message
+        }
+        
         const line = document.createElement('div');
         line.textContent = `[${timestamp}] ${decoded}`;
         display.insertBefore(line, display.firstChild);
-
-        while (display.childNodes.length > 50) {
-          display.removeChild(display.lastChild);
+        
+        // Update tracking for status messages
+        if (isStatusMessage) {
+          lastStatusMessage = decoded;
+          lastStatusTime = now;
         }
+      }
+      
+      // Keep only the last 100 messages (increased from 50 for better log viewing)
+      while (display.childNodes.length > 100) {
+        display.removeChild(display.lastChild);
       }
     }
 
