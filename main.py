@@ -6,6 +6,7 @@ from ble_simple_peripheral import BLESimplePeripheral
 import utime
 from collections import namedtuple
 import os
+import machine
 
 # --- Configuration ---
 BASE_TRIGGER = {
@@ -266,7 +267,7 @@ def on_rx(msg):
                 if upload_filename == "main.py":
                     sp.send(" Restarting in 1 second to load new main.py...")
                     time.sleep(1)  # Give time for the message to be sent
-                    import machine
+                    
                     machine.reset()
                 
             except Exception as e:
@@ -300,7 +301,7 @@ def on_rx(msg):
                 sp.send(" Schedule reloaded")
                 time.sleep(1)  # Give time for file system to sync
                 sp.send(" Current Schedule: " + read_schedule())
-                import machine # Reset to apply new schedule
+                # Reset to apply new schedule
                 print(" Restarting to apply new schedule...")
                 machine.reset()
             except Exception as e:
