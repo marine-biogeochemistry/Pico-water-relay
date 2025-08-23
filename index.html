@@ -67,19 +67,20 @@
     <input type="number" id="eventDuration" min="1" max="1440" value="60">
     
     <label for="batchCount">🔁 Number of Events:</label>
-    <input type="number" id="batchCount" min="1" max="50" value="5">
+    <input type="number" id="batchCount" min="1" max="100" value="5">
     
     <label for="batchInterval">📅 Interval (days):</label>
-    <input type="number" id="batchInterval" min="1" max="1440" value="7">
+    <input type="number" id="batchInterval" min="1" max="100" value="7">
   </div>
   <br>
   <button onclick="generateBatchSchedule()">🧮 Generate Schedule</button>
+  <button onclick="sendSetTime()">⏱ Set Device Time</button>
   <button onclick="manualOn()">🟢 Manual Relay ON</button>
   <button onclick="manualOff()">🔴 Manual Relay OFF</button>
 
   <h3>📅 Batch Schedule Generator</h3>
   <p>Enter multiple event times to send in bulk:</p>
-  <textarea id="scheduleInput" rows="6" style="width:100%; font-family: monospace;" placeholder="e.g.\n2025-07-30 08:00\n2025-08-01 14:30"></textarea>
+  <textarea id="scheduleInput" rows="6" style="width:100%; font-family: monospace;" placeholder="e.g. 2025-07-30 08:00 60"></textarea>
   <br>
   <button onclick="sendScheduleFile()">📤 Send Schedule File</button>
   <button onclick="readSchedule()">📥 Read Schedule File</button>
@@ -438,6 +439,39 @@
     function manualOff() {
       sendBLEMessage("MANUAL_OFF");
       document.getElementById("connectionStatus").textContent = "🔴 Manual OFF command sent";
+    }
+
+    function sendSetTime() {
+      const date = document.getElementById('eventDate').value;
+      const time = document.getElementById('eventTime').value;
+      if (!rxChar) {
+        alert('⚠️ BLE not connected yet.');
+        return;
+      }
+      if (!date || !time) {
+        alert('⛔️ Please set both Date and Time');
+        return;
+      }
+      const timeWithSeconds = time.length === 5 ? `${time}:00` : time;
+      const dateCmd = `SETDATE ${date}`;
+      const timeCmd = `SETCLOCK ${timeWithSeconds}`;
+
+      const display = document.getElementById('bluetoothData');
+      const line = document.createElement('div');
+      line.textContent = `⏱ Setting device time to ${date} ${timeWithSeconds}`;
+      display.insertBefore(line, display.firstChild);
+
+      // Send as two small commands to avoid BLE fragmentation issues
+      sendBLEMessage(dateCmd + "\n")
+        .then(() => sendBLEMessage(timeCmd + "\n"))
+        .then(() => {
+          console.log('📤 Sent:', dateCmd, 'then', timeCmd);
+          document.getElementById('connectionStatus').textContent = '⏱ Date/Time commands sent';
+        })
+        .catch(err => {
+          console.error('❌ BLE write failed:', err);
+          alert('Failed to send time command');
+        });
     }
 
     // Message filtering variables

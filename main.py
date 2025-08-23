@@ -48,21 +48,24 @@ def relay_off():
 relay_is_on = False
 relay_off_time = None
 active_duration_sec = RELAY_DURATION_MIN * 60  # Tracks the duration of the current ON window
+settime_buffer = ""  # Accumulates partial SETTIME command chunks
+pending_date = None  # tuple (y,m,d)
+pending_time = None  # tuple (h,m,s)
 
 # --- Setup BLE ---
 ble = bluetooth.BLE()
 ble.active(True)
 sp = BLESimplePeripheral(ble)
-print("🔵 Pico W BLE initialized and advertising")
-print("🔍 Device should be discoverable as 'mpy-uart'")
+print(" Pico W BLE initialized and advertising")
+print(" Device should be discoverable as 'mpy-uart'")
 
 try:
     timestamp = utime.localtime(os.stat("schedule.txt")[8])
-    print("📅 Schedule last modified:", "{:04d}-{:02d}-{:02d} {:02d}:{:02d}".format(*timestamp[:5]))
-    sp.send("📅 Schedule last updated: {:04d}-{:02d}-{:02d} {:02d}:{:02d}".format(*timestamp[:5]))
+    print(" Schedule last modified:", "{:04d}-{:02d}-{:02d} {:02d}:{:02d}".format(*timestamp[:5]))
+    sp.send(" Schedule last updated: {:04d}-{:02d}-{:02d} {:02d}:{:02d}".format(*timestamp[:5]))
 except OSError:
-    print("⚠️ No schedule file found — skipping timestamp feedback")
-    sp.send("⚠️ No schedule file to restore yet")
+    print(" No schedule file found — skipping timestamp feedback")
+    sp.send(" No schedule file to restore yet")
 
 try:
     with open("schedule.txt", "r") as f:
@@ -76,13 +79,13 @@ try:
                 if new_event not in SCHEDULED_EVENTS:
                     SCHEDULED_EVENTS.append(new_event)
 
-    # ✅ Now sort after loading
+    # Now sort after loading
     SCHEDULED_EVENTS.sort(key=lambda x: utime.mktime((x[0], x[1], x[2], x[3], x[4], 0, 0, 0)))
-    print("✅ Schedule restored from file: {} entries".format(len(SCHEDULED_EVENTS)))
-    sp.send("📂 Schedule file loaded — {} events restored".format(len(SCHEDULED_EVENTS)))
+    print(" Schedule restored from file: {} entries".format(len(SCHEDULED_EVENTS)))
+    sp.send(" Schedule file loaded — {} events restored".format(len(SCHEDULED_EVENTS)))
 
 except Exception as e:
-    print("⚠️ Failed to restore schedule:", e)
+    print(" Failed to restore schedule:", e)
 
 
 # --- Boot Time Restore ---
@@ -200,7 +203,7 @@ def handle_ble_command():
                     duration = RELAY_DURATION_MIN
                 trigger_unix = utime.mktime((y, m, d, h, minute, 0, 0, 0))
                 if trigger_unix > current_unix:
-                    future_events.append((trigger_unix, (y, m, d, h, minute, duration)))
+                    future_events.append((trigger_unix, duration))
 
             # Check next Nth day trigger
             base_unix = utime.mktime((BASE_TRIGGER["year"], BASE_TRIGGER["month"], BASE_TRIGGER["day"],
@@ -209,8 +212,7 @@ def handle_ble_command():
             while True:
                 nth_unix = base_unix + days_ahead * INTERVAL_DAYS * 86400
                 if nth_unix > current_unix:
-                    future_events.append((nth_unix, ("IntervalTrigger", BASE_TRIGGER["hour"],
-                                                     BASE_TRIGGER["minute"], RELAY_DURATION_MIN)))
+                    future_events.append((nth_unix, RELAY_DURATION_MIN))
                     break
                 days_ahead += 1
 
@@ -220,14 +222,14 @@ def handle_ble_command():
                 details = next_event[1]
 
                 if details[0] == "IntervalTrigger":
-                    sp.send("🔁 Next interval: {:04d}-{:02d}-{:02d} {:02d}:{:02d} (Duration: {} min)".format(
+                    sp.send(" Next interval: {:04d}-{:02d}-{:02d} {:02d}:{:02d} (Duration: {} min)".format(
                         dt[0], dt[1], dt[2], details[1], details[2], details[3]))
                 else:
                     y, m, d, h, minute, duration = details
-                    sp.send("📅 Next scheduled: {:04d}-{:02d}-{:02d} {:02d}:{:02d} (Duration: {} min)".format(
+                    sp.send(" Next scheduled: {:04d}-{:02d}-{:02d} {:02d}:{:02d} (Duration: {} min)".format(
                         y, m, d, h, minute, duration))
             else:
-                sp.send("⚠️ No upcoming triggers found")
+                sp.send(" No upcoming triggers found")
                 
 
 # Globals to manage file transfer
@@ -244,6 +246,7 @@ manual_override = False
 
 def on_rx(msg):
     global receiving_file, file_lines, uploading_file, upload_lines, upload_filename, manual_override, relay_is_on, relay_off_time, active_duration_sec
+    global settime_buffer, pending_date, pending_time
     decoded_msg = msg.decode().strip()
     print("RX received:", decoded_msg)
 
@@ -257,17 +260,17 @@ def on_rx(msg):
                         if line:  # Skip empty lines
                             f.write(line + "\n")
                 
-                sp.send(f"✅ File '{upload_filename}' uploaded and saved.")
+                sp.send(f" File '{upload_filename}' uploaded and saved.")
                 
                 # If this is main.py, schedule a reset after a short delay
                 if upload_filename == "main.py":
-                    sp.send("🔄 Restarting in 1 second to load new main.py...")
+                    sp.send(" Restarting in 1 second to load new main.py...")
                     time.sleep(1)  # Give time for the message to be sent
                     import machine
                     machine.reset()
                 
             except Exception as e:
-                sp.send(f"⚠️ Failed to write file: {e}")
+                sp.send(f" Failed to write file: {e}")
             finally:
                 # Always clean up, even if there was an error
                 uploading_file = False
@@ -292,16 +295,16 @@ def on_rx(msg):
                 with open("schedule.txt", "w") as f:
                     for line in file_lines:
                         f.write(line + "\n")
-                sp.send("✅ Schedule file saved")
+                sp.send(" Schedule file saved")
                 schedule = load_schedule("schedule.txt")
-                sp.send("🔄 Schedule reloaded")
+                sp.send(" Schedule reloaded")
                 time.sleep(1)  # Give time for file system to sync
-                sp.send("📅 Current Schedule: " + read_schedule())
+                sp.send(" Current Schedule: " + read_schedule())
                 import machine # Reset to apply new schedule
-                print("🔄 Restarting to apply new schedule...")
+                print(" Restarting to apply new schedule...")
                 machine.reset()
             except Exception as e:
-                sp.send(f"⚠️ Failed to write schedule file: {e}")
+                sp.send(f" Failed to write schedule file: {e}")
             file_lines = []
         else:
             file_lines.append(decoded_msg)
@@ -313,20 +316,20 @@ def on_rx(msg):
         uploading_file = True
         upload_lines = []
         upload_filename = decoded_msg.split(":", 1)[1].strip() or "main.py"
-        sp.send(f"📥 Upload mode started for '{upload_filename}' — send lines then ENDUPLOAD")
+        sp.send(f" Upload mode started for '{upload_filename}' — send lines then ENDUPLOAD")
         return
 
     if decoded_msg == "BEGINFILE":
         receiving_file = True
         file_lines = []
-        sp.send("📥 Schedule file mode started — send lines then ENDFILE")
+        sp.send(" Schedule file mode started — send lines then ENDFILE")
         return
     
     if decoded_msg == "CLOSE_RELAY":
         relay_off()
         relay_is_on = False
         relay_off_time = rtc.datetime()  # Optionally log the time
-        sp.send("⏹ Relay closed by user command")
+        sp.send(" Relay closed by user command")
         return
 
     elif decoded_msg == "READFILE":
@@ -337,9 +340,9 @@ def on_rx(msg):
                     for line in lines:
                         sp.send("[FILE] " + line.strip())
                 else:
-                    sp.send("📂 Schedule file is empty")
+                    sp.send(" Schedule file is empty")
         except Exception as e:
-            sp.send("⚠️ Failed to read schedule file")
+            sp.send(" Failed to read schedule file")
         return
 
 
@@ -364,9 +367,9 @@ def on_rx(msg):
             new_duration = int(decoded_msg.split(":")[1])
             globals()["RELAY_DURATION_MIN"] = new_duration
             sp.send("Duration updated to: {} min".format(new_duration))
-            print("⚙️ Duration updated to:", new_duration)
+            print(" Duration updated to:", new_duration)
         except Exception as e:
-            print("❌ Error parsing DURATION:", e)
+            print(" Error parsing DURATION:", e)
             sp.send("Invalid DURATION format. Use DURATION:X")
 
     elif decoded_msg == "GETLOG":
@@ -386,32 +389,129 @@ def on_rx(msg):
             # Clear the log file by opening it in write mode with empty content
             with open("relay_log.txt", "w") as f:
                 f.write("")
-            sp.send("🗑️ Log file cleared successfully")
-            print("🗑️ Log file cleared by user command")
+            sp.send(" Log file cleared successfully")
+            print(" Log file cleared by user command")
         except Exception as e:
-            sp.send("⚠️ Failed to clear log file: {}".format(str(e)))
-            print("❌ Error clearing log file:", e)
+            sp.send(" Failed to clear log file: {}".format(str(e)))
+            print(" Error clearing log file:", e)
         
     elif decoded_msg == "READ_SCHEDULE":
         try:
             with open("schedule.txt", "r") as f:
                 lines = f.readlines()
                 if lines:
-                    sp.send("📅 Current Schedule:")
+                    sp.send(" Current Schedule:")
                     for line in lines:
                         sp.send("[SCHEDULE] " + line.strip())
                 else:
-                    sp.send("📅 No scheduled events found")
+                    sp.send(" No scheduled events found")
         except Exception as e:
-            sp.send("⚠️ Failed to read schedule file: {}".format(str(e)))
+            sp.send(" Failed to read schedule file: {}".format(str(e)))
             
+    elif decoded_msg.startswith("SETTIME"):
+        try:
+            # Accepts: "SETTIME YYYY-MM-DD HH:MM[:SS]" or ISO "SETTIME YYYY-MM-DDTHH:MM[:SS]"
+            # Handle fragmented BLE writes: accumulate until we have full date and time
+            incoming = decoded_msg.strip()
+            global settime_buffer
+            if settime_buffer:
+                incoming = (settime_buffer + " " + incoming).strip()
+                settime_buffer = ""
+
+            parts = incoming.split(None, 1)  # split on any whitespace once
+            if len(parts) < 2:
+                # Not enough yet; wait for next chunk
+                settime_buffer = incoming
+                return
+
+            rest = parts[1].strip().replace('T', ' ')
+            tokens = [t for t in rest.split() if t]
+            # If we don't yet have both tokens or time lacks ':', buffer and wait
+            if len(tokens) < 2 or (":" not in tokens[1]):
+                settime_buffer = incoming
+                sp.send(" Waiting for more time data...")
+                return
+
+            date_str = tokens[0]
+            # Sanitize time string: keep only digits and ':'; drop trailing 'Z' or other chars
+            raw_time = tokens[1].rstrip('Z')
+            time_str = ''.join([c for c in raw_time if ('0' <= c <= '9') or c == ':' ])
+            y, m, d = map(int, date_str.split('-'))
+
+            tparts = time_str.split(':')
+            if len(tparts) < 2:
+                raise ValueError("Time must be HH:MM or HH:MM:SS")
+            h = int(tparts[0]); minute = int(tparts[1]); sec = int(tparts[2]) if len(tparts) >= 3 else 0
+
+            # Compute weekday Mon=1..Sun=7 using utime
+            ts = utime.mktime((y, m, d, h, minute, sec, 0, 0))
+            wk_mon0 = utime.localtime(ts)[6]  # 0=Mon..6=Sun in MicroPython
+            weekday = (wk_mon0 % 7) + 1       # 1=Mon..7=Sun for DS3231
+
+            rtc.datetime((y, m, d, weekday, h, minute, sec))
+            sp.send(" Time updated to {:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d} (weekday {})".format(
+                y, m, d, h, minute, sec, weekday))
+            now = rtc.datetime()
+            sp.send("Current Time at {:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}".format(
+                now[0], now[1], now[2], now[4], now[5], now[6]))
+        except Exception as e:
+            # Provide debug context on failure
+            try:
+                sp.send(" SETTIME parse failed. Received: '" + incoming + "'")
+                sp.send(" Parsed rest: '" + rest + "'")
+                sp.send(" Tokens: " + str(tokens))
+            except Exception:
+                pass
+            sp.send(" Failed to set time: {}".format(e))
+        return
+
+    elif decoded_msg.startswith("SETDATE "):
+        try:
+            _, date_str = decoded_msg.split(None, 1)
+            y, m, d = map(int, date_str.strip().split('-'))
+            pending_date = (y, m, d)
+            sp.send(" Date received: {:04d}-{:02d}-{:02d}".format(y, m, d))
+        except Exception as e:
+            sp.send(" Failed to parse SETDATE: {}".format(e))
+        return
+
+    elif decoded_msg.startswith("SETCLOCK "):
+        try:
+            _, time_str = decoded_msg.split(None, 1)
+            tparts = time_str.strip().split(':')
+            if len(tparts) < 2:
+                raise ValueError("Use HH:MM or HH:MM:SS")
+            h = int(tparts[0]); minute = int(tparts[1]); sec = int(tparts[2]) if len(tparts) >= 3 else 0
+            pending_time = (h, minute, sec)
+            sp.send(" Time received: {:02d}:{:02d}:{:02d}".format(h, minute, sec))
+
+            if pending_date is not None:
+                y, m, d = pending_date
+                # Compute weekday Mon=1..Sun=7 using utime
+                ts = utime.mktime((y, m, d, h, minute, sec, 0, 0))
+                wk_mon0 = utime.localtime(ts)[6]
+                weekday = (wk_mon0 % 7) + 1
+                rtc.datetime((y, m, d, weekday, h, minute, sec))
+                sp.send(" Time updated to {:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d} (weekday {})".format(
+                    y, m, d, h, minute, sec, weekday))
+                now = rtc.datetime()
+                sp.send("Current Time at {:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}".format(
+                    now[0], now[1], now[2], now[4], now[5], now[6]))
+                pending_date = None
+                pending_time = None
+            else:
+                sp.send(" Waiting for SETDATE...")
+        except Exception as e:
+            sp.send(" Failed to parse SETCLOCK: {}".format(e))
+        return
+
     elif decoded_msg == "MANUAL_ON":
         manual_override = True
         active_duration_sec = 0
         relay_off_time = None
         relay_on()
         relay_is_on = True
-        sp.send("🟢 Relay forced ON (Manual mode). Timers paused.")
+        sp.send(" Relay forced ON (Manual mode). Timers paused.")
         return
 
     elif decoded_msg == "MANUAL_OFF":
@@ -419,18 +519,18 @@ def on_rx(msg):
         relay_off()
         relay_is_on = False
         relay_off_time = None
-        sp.send("🔴 Relay forced OFF (Manual mode disabled). Timers resumed.")
+        sp.send(" Relay forced OFF (Manual mode disabled). Timers resumed.")
         return
 
     else:
-        sp.send("❓ Unknown command or unsupported format")
+        sp.send(" Unknown command or unsupported format")
 
 def read_schedule():
     try:
         with open("schedule.txt", "r") as f:
             return f.read()
     except Exception as e:
-        return f"⚠️ Error reading schedule: {e}"
+        return f" Error reading schedule: {e}"
 
 def load_schedule(filename="schedule.txt"):
     schedule = []
@@ -480,7 +580,7 @@ def log_event(action, timestamp, duration=None):
                 f.write(line)
 
     except Exception as e:
-        print("⚠️ Log write failed:", e)
+        print(" Log write failed:", e)
 
 # Register the BLE callback:
 sp.on_write(on_rx)
@@ -495,11 +595,11 @@ while True:
     # Check BLE status periodically
     if loop_counter % ble_status_check_interval == 0:
         if not ble.active():
-            print("⚠️ BLE inactive, reactivating...")
+            print(" BLE inactive, reactivating...")
             ble.active(True)
             time.sleep(0.5)  # Give BLE time to restart
         if not sp.is_connected():
-            print("🔍 BLE advertising, waiting for connection...")
+            print(" BLE advertising, waiting for connection...")
     
     current_time = rtc.datetime()
     timestamp = format_time(current_time)
@@ -560,11 +660,11 @@ while True:
                 sp.send("Current Time at " + timestamp)
                 sp.send("Relay ON at " + timestamp + " for {} min".format(duration))
                 # Print only once when relay actually turns on (not every loop)
-                print("🔴 RELAY ACTIVATED: " + timestamp + " for {} min".format(duration))
+                print(" RELAY ACTIVATED: " + timestamp + " for {} min".format(duration))
                 log_event("Relay ON", timestamp, duration)
                 current_triggered = True
 
-                # 💾 Save updated schedule to disk
+                # Save updated schedule to disk
                 try:
                     with open("schedule.txt", "w") as f:
                         for evt in SCHEDULED_EVENTS:
@@ -574,9 +674,9 @@ while True:
                                 y, m, d, h, minute = evt
                                 dur = RELAY_DURATION_MIN
                             f.write(f"{y:04d}-{m:02d}-{d:02d} {h:02d}:{minute:02d} {dur}\n")
-                    sp.send("✅ Schedule saved — {} total events".format(len(SCHEDULED_EVENTS)))
+                    sp.send(" Schedule saved — {} total events".format(len(SCHEDULED_EVENTS)))
                 except Exception as e:
-                    sp.send(f"⚠️ Failed to write schedule file: {e}")
+                    sp.send(f" Failed to write schedule file: {e}")
 
                 break
 
@@ -589,7 +689,7 @@ while True:
             sp.send("Current Time at " + timestamp)
             sp.send("Relay ON at " + timestamp + " for {} min".format(duration))
             # Print only once when relay actually turns on (not every loop)
-            print("🔴 RELAY ACTIVATED (Nth Day): " + timestamp + " for {} min".format(duration))
+            print(" RELAY ACTIVATED (Nth Day): " + timestamp + " for {} min".format(duration))
             log_event("Relay ON", timestamp, duration)
 
         if not relay_is_on:
