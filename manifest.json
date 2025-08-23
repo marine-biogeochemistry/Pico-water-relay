@@ -1,10 +1,13 @@
 {
-  "name": "MKR1010 BLE Listener",
+  "name": "PICO BLE Listener",
   "short_name": "BLE Listener",
   "start_url": "index.html",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#3367D6",
+  "scope": "./",
+  "orientation": "portrait",
+  "lang": "en-AU",
   "icons": [
     {
       "src": "icon-192.png",
