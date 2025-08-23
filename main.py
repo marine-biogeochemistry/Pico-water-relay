@@ -17,18 +17,18 @@ BASE_TRIGGER = {
 }
 
 SCHEDULED_EVENTS = [
-    # (2025, 7, 26, 19, 57),
+    # (2025, 8, 23, 11, 37),
     # (2025, 7, 26, 20, 3),
     # (2025, 8, 1, 8, 0),
 ]
 
 INTERVAL_DAYS = 30
 
-RELAY_DURATION_MIN = 1
+RELAY_DURATION_MIN = 2
 
 CHECK_INTERVAL_SEC = 5
 
-MAX_LOG_LINES = 20  # Maximum number of log lines to return
+MAX_LOG_LINES = 100  # Maximum number of log lines to return
 
 # --- Setup RTC and Relay ---
 i2c = I2C(0, scl=Pin(5), sda=Pin(4))
@@ -36,17 +36,18 @@ rtc = ds3231.DS3231(i2c)
 relay = Pin(14, Pin.OUT)
 
 def relay_on():
-    relay.value(1)
+    relay.value(0)
     global relay_is_on
     relay_is_on = True
 
 def relay_off():
-    relay.value(0)
+    relay.value(1)
     global relay_is_on
     relay_is_on = False
 
 relay_is_on = False
 relay_off_time = None
+active_duration_sec = RELAY_DURATION_MIN * 60  # Tracks the duration of the current ON window
 
 # --- Setup BLE ---
 ble = bluetooth.BLE()
@@ -92,9 +93,10 @@ scheduled_unix = utime.mktime((BASE_TRIGGER["year"], BASE_TRIGGER["month"], BASE
                                BASE_TRIGGER["hour"], BASE_TRIGGER["minute"], 0, 0, 0))
 
 if scheduled_unix <= current_unix < scheduled_unix + (RELAY_DURATION_MIN * 60):
-    relay.value(0)
+    relay_on()
     relay_is_on = True
     relay_off_time = scheduled_unix + (RELAY_DURATION_MIN * 60)
+    active_duration_sec = RELAY_DURATION_MIN * 60
     print("Relay restored ON at boot")
     sp.send("Relay ON restored at boot — Time remaining: {} min".format((relay_off_time - current_unix) // 60))
 
@@ -238,8 +240,10 @@ uploading_file = False
 upload_lines = []
 upload_filename = None
 
+manual_override = False
+
 def on_rx(msg):
-    global receiving_file, file_lines, uploading_file, upload_lines, upload_filename
+    global receiving_file, file_lines, uploading_file, upload_lines, upload_filename, manual_override, relay_is_on, relay_off_time, active_duration_sec
     decoded_msg = msg.decode().strip()
     print("RX received:", decoded_msg)
 
@@ -401,6 +405,23 @@ def on_rx(msg):
         except Exception as e:
             sp.send("⚠️ Failed to read schedule file: {}".format(str(e)))
             
+    elif decoded_msg == "MANUAL_ON":
+        manual_override = True
+        active_duration_sec = 0
+        relay_off_time = None
+        relay_on()
+        relay_is_on = True
+        sp.send("🟢 Relay forced ON (Manual mode). Timers paused.")
+        return
+
+    elif decoded_msg == "MANUAL_OFF":
+        manual_override = False
+        relay_off()
+        relay_is_on = False
+        relay_off_time = None
+        sp.send("🔴 Relay forced OFF (Manual mode disabled). Timers resumed.")
+        return
+
     else:
         sp.send("❓ Unknown command or unsupported format")
 
@@ -464,8 +485,7 @@ def log_event(action, timestamp, duration=None):
 # Register the BLE callback:
 sp.on_write(on_rx)
 
-relay.value(0) # Turn OFF
-
+relay_off() # Ensure relay is OFF at startup (active-low relay)
 # --- Main Loop ---
 loop_counter = 0
 ble_status_check_interval = 60  # Check BLE status every 60 loops (60 seconds)
@@ -488,18 +508,29 @@ while True:
     # Only output status every 5 seconds for readability
     should_output = (loop_counter % output_interval == 0)
 
+    # Manual override mode: keep relay ON indefinitely and skip timers/scheduling
+    if manual_override:
+        if not relay_is_on:
+            relay_on()
+            relay_is_on = True
+        if should_output:
+            sp.send("Relay ON — Manual mode (timers paused)")
+            print("Relay ON (Manual) at " + timestamp)
+        time.sleep(1)
+        continue
+
     if relay_is_on:
         current_unix = utime.time()
         remaining = relay_off_time - current_unix
 
         if remaining <= 0:
-            relay.value(0)
+            relay_off()
             relay_is_on = False
             sp.send("Relay OFF at " + timestamp)
             print("Relay OFF at " + timestamp)
             log_event("Relay OFF", timestamp)
         else:
-            elapsed = (RELAY_DURATION_MIN * 60) - remaining
+            elapsed = active_duration_sec - remaining
             mins_remain = remaining // 60
             secs_remain = remaining % 60
             mins_elapsed = elapsed // 60
@@ -522,9 +553,10 @@ while True:
 
             if (current_time[0] == y and current_time[1] == m and current_time[2] == d and
                 current_time[4] == h and current_time[5] == minute and not current_triggered):
-                relay.value(1)
+                relay_on()
                 relay_is_on = True
-                relay_off_time = utime.time() + (duration * 60)
+                active_duration_sec = duration * 60
+                relay_off_time = utime.time() + active_duration_sec
                 sp.send("Current Time at " + timestamp)
                 sp.send("Relay ON at " + timestamp + " for {} min".format(duration))
                 # Print only once when relay actually turns on (not every loop)
@@ -550,9 +582,10 @@ while True:
 
         if not current_triggered and is_nth_day_trigger(current_time):
             duration = RELAY_DURATION_MIN  # or customize it if needed
-            relay.value(1)
+            relay_on()
             relay_is_on = True
-            relay_off_time = utime.time() + (duration * 60)
+            active_duration_sec = duration * 60
+            relay_off_time = utime.time() + active_duration_sec
             sp.send("Current Time at " + timestamp)
             sp.send("Relay ON at " + timestamp + " for {} min".format(duration))
             # Print only once when relay actually turns on (not every loop)

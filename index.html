@@ -74,7 +74,8 @@
   </div>
   <br>
   <button onclick="generateBatchSchedule()">🧮 Generate Schedule</button>
-
+  <button onclick="manualOn()">🟢 Manual Relay ON</button>
+  <button onclick="manualOff()">🔴 Manual Relay OFF</button>
 
   <h3>📅 Batch Schedule Generator</h3>
   <p>Enter multiple event times to send in bulk:</p>
@@ -82,14 +83,14 @@
   <br>
   <button onclick="sendScheduleFile()">📤 Send Schedule File</button>
   <button onclick="readSchedule()">📥 Read Schedule File</button>
+  <button onclick="clearScheduleOnPico()">🗑️ Clear Schedule</button>
 
-
-  <div style="display: flex; align-items: center; gap: 10px; margin: 10px 0;">
+<!--   <div style="display: flex; align-items: center; gap: 10px; margin: 10px 0;">
     <h3 style="margin: 0;">📤 Upload main.py:</h3>
     <input type="file" id="fileInput" accept=".py" style="flex-grow: 1;">
     <button onclick="uploadFile()">Upload to Pico</button>
   </div>
-  <div id="uploadStatus" style="font-weight: bold;"></div>
+  <div id="uploadStatus" style="font-weight: bold;"></div> -->
 
   <script>
     let bluetoothDevice, txChar, rxChar;
@@ -115,9 +116,21 @@
     });
 
     async function connectAndListen() {
+      // Environment checks
+      if (!('bluetooth' in navigator)) {
+        alert('Web Bluetooth not supported in this browser. Please use Chrome or Edge.');
+        return;
+      }
+      const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+      const isHttps = location.protocol === 'https:';
+      if (!(isHttps || isLocalhost)) {
+        alert('Open this page over HTTPS or http://localhost to use Web Bluetooth.');
+        return;
+      }
+
       try {
         bluetoothDevice = await navigator.bluetooth.requestDevice({
-          acceptAllDevices: true,
+          filters: [{ namePrefix: 'mpy' }],
           optionalServices: ['6e400001-b5a3-f393-e0a9-e50e24dcca9e'] // Nordic UART Service UUID
         });
 
@@ -417,6 +430,15 @@
       }
     }
 
+    function manualOn() {
+      sendBLEMessage("MANUAL_ON");
+      document.getElementById("connectionStatus").textContent = "🟢 Manual ON command sent";
+    }
+
+    function manualOff() {
+      sendBLEMessage("MANUAL_OFF");
+      document.getElementById("connectionStatus").textContent = "🔴 Manual OFF command sent";
+    }
 
     // Message filtering variables
     let lastStatusMessage = '';
@@ -544,8 +566,6 @@
       document.getElementById("scheduleInput").value = output.trim();
     }
 
-
-
     function sendScheduleFile() {
       const rawData = document.getElementById("scheduleInput").value.trim();
       if (!rawData) {
@@ -572,6 +592,24 @@
       } else {
         alert("⚠️ BLE not connected yet.");
       }
+    }
+
+    function clearScheduleOnPico() {
+      if (!rxChar) {
+        alert("⚠️ BLE not connected yet.");
+        return;
+      }
+      const cmds = ["BEGINFILE", "ENDFILE"];
+      let delay = 0;
+      cmds.forEach((cmd) => {
+        setTimeout(() => {
+          rxChar.writeValue(new TextEncoder().encode(cmd))
+            .then(() => console.log("📤 Sent:", cmd))
+            .catch(err => console.error("❌ Failed to send:", cmd, err));
+        }, delay);
+        delay += 150;
+      });
+      document.getElementById("connectionStatus").textContent = "🗑️ Clearing schedule on Pico W...";
     }
 
   </script>
